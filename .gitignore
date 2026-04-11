@@ -33,3 +33,6 @@ Thumbs.db
 venv/
 .venv/
 env/
+
+# Deploy
+deploy.env
