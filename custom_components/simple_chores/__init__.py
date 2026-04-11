@@ -214,7 +214,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
     except Exception:
         _LOGGER.exception("Unexpected error setting up Simple Chores integration")
-        raise
+        return False
 
     # Register services
     await _async_setup_services(hass, coordinator)
@@ -290,25 +290,21 @@ class ServiceHandlerFactory:
 
         async def handler(call: ServiceCall) -> None:
             try:
-                _LOGGER.info("=== User handler called for operation: %s ===", operation)
-                _LOGGER.info("Service call data: %s", dict(call.data))
-                _LOGGER.info("ATTR_USER_NAME constant value: %s", ATTR_USER_NAME)
-                _LOGGER.info("ATTR_AVATAR constant value: %s", ATTR_AVATAR)
-                _LOGGER.info("ATTR_USER_ID constant value: %s", ATTR_USER_ID)
+                _LOGGER.debug("User handler called for operation: %s", operation)
+                _LOGGER.debug("Service call data: %s", dict(call.data))
 
                 user_id = call.data.get(ATTR_USER_ID)
                 name = call.data.get(ATTR_USER_NAME)
                 avatar = call.data.get(ATTR_AVATAR)
 
-                _LOGGER.info("Extracted values - user_id: %s, name: %s, avatar: %s", user_id, name, avatar)
+                _LOGGER.debug("Extracted values - user_id: %s, name: %s, avatar: %s", user_id, name, avatar)
 
                 if operation == "add":
-                    _LOGGER.info("Calling coordinator.async_add_user with name=%s, avatar=%s", name, avatar)
                     await self.coordinator.async_add_user(name, avatar)
-                    _LOGGER.info("Successfully added custom user: %s", name)
+                    _LOGGER.debug("Successfully added custom user: %s", name)
                 elif operation == "remove":
                     await self.coordinator.async_remove_user(user_id)
-                    _LOGGER.info("Successfully removed custom user: %s", user_id)
+                    _LOGGER.debug("Successfully removed custom user: %s", user_id)
                 elif operation == "update":
                     await self.coordinator.async_update_user(user_id, name, avatar)
                     _LOGGER.info("Successfully updated custom user: %s", user_id)
@@ -554,7 +550,7 @@ async def _async_send_due_notification(
         days_before_list = entry.options.get(CONF_NOTIFY_DAYS_BEFORE, DEFAULT_NOTIFY_DAYS_BEFORE)
 
     # Get all chores and filter for each notification day
-    all_chores = coordinator.data.get("all_chores", [])
+    all_chores = coordinator.data.get("chores", [])
     today = date.today()
 
     # Get all mobile app notify services

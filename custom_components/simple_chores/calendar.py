@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MAX_CALENDAR_EVENTS
-from .coordinator import SimpleChoresCoordinator, calculate_next_due
+from .coordinator import SimpleChoresCoordinator, calculate_next_due_for_chore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -125,10 +125,26 @@ class SimpleChoresCalendar(CoordinatorEntity[SimpleChoresCoordinator], CalendarE
             _LOGGER.warning("Invalid date format for chore %s: %s", chore["id"], chore["next_due"])
             return []
 
+        # One-off chores only appear on their due date
+        if frequency == "once":
+            if start <= current_due <= end:
+                events.append(
+                    CalendarEvent(
+                        start=current_due,
+                        end=current_due + timedelta(days=1),
+                        summary=chore["name"],
+                        description=f"Room: {room_name}\nFrequency: {frequency}",
+                        uid=f"{chore['id']}_{current_due.isoformat()}",
+                    )
+                )
+            return events
+
         # If the due date is before our start, advance it until it's within range
         while current_due < start:
             try:
-                current_due = calculate_next_due(current_due, frequency)
+                current_due = calculate_next_due_for_chore(chore, current_due)
+                if current_due is None:
+                    return events
             except (ValueError, OverflowError) as e:
                 _LOGGER.error("Invalid date calculation for chore %s: %s", chore["id"], e, exc_info=True)
                 break
@@ -150,7 +166,10 @@ class SimpleChoresCalendar(CoordinatorEntity[SimpleChoresCoordinator], CalendarE
                         uid=f"{chore['id']}_{current_due.isoformat()}",
                     )
                 )
-                current_due = calculate_next_due(current_due, frequency)
+                next_due = calculate_next_due_for_chore(chore, current_due)
+                if next_due is None:
+                    break
+                current_due = next_due
                 count += 1
             except (ValueError, OverflowError) as e:
                 _LOGGER.error(

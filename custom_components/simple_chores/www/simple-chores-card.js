@@ -1016,7 +1016,7 @@ class SimpleChoresCard extends LitElement {
 
     // Fix for Due Today chores - if no specific date, use today's date
     if (!dueDate) {
-      dueDate = new Date().toISOString().split('T')[0];
+      dueDate = this._toLocalDateStr(new Date());
     }
 
     // Use consolidated room lookup logic
@@ -1233,6 +1233,13 @@ class SimpleChoresCard extends LitElement {
     return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
   }
 
+  _toLocalDateStr(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   _calculateNextOccurrenceForChore(chore, fromDate) {
     const recurrenceType = chore.recurrence_type || 'interval';
     const frequency = chore.frequency;
@@ -1359,7 +1366,7 @@ class SimpleChoresCard extends LitElement {
     while (currentDate && currentDate <= endDate && count < maxOccurrences) {
       occurrences.push({
         ...chore,
-        next_due: currentDate.toISOString().split('T')[0],
+        next_due: this._toLocalDateStr(currentDate),
         isProjected: true, // Flag to indicate this is a simulated occurrence
       });
 
@@ -1468,7 +1475,7 @@ class SimpleChoresCard extends LitElement {
     });
 
     const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = this._toLocalDateStr(today);
 
     return html`
       <div class="calendar-view">
@@ -1801,15 +1808,15 @@ class SimpleChoresCard extends LitElement {
         name: chore.name || chore.chore_name,
         room_id: chore.room_id || chore.room,
         room_name: chore.room_name || chore.room, // Use room as fallback for room_name
-        next_due: chore.next_due || chore.due_date || chore.date || new Date().toISOString().split('T')[0],
-        due_date: chore.next_due || chore.due_date || chore.date || new Date().toISOString().split('T')[0],
+        next_due: chore.next_due || chore.due_date || chore.date || this._toLocalDateStr(new Date()),
+        due_date: chore.next_due || chore.due_date || chore.date || this._toLocalDateStr(new Date()),
         frequency: chore.frequency
       };
 
       // If this chore is in "due today", and we don't have a specific date, assume today
       if (sensorName === SimpleChoresCard.SENSORS.DUE_TODAY && !processedChore.next_due) {
-        processedChore.next_due = new Date().toISOString().split('T')[0];
-        processedChore.due_date = new Date().toISOString().split('T')[0];
+        processedChore.next_due = this._toLocalDateStr(new Date());
+        processedChore.due_date = this._toLocalDateStr(new Date());
       }
 
       // Debug log for each chore
@@ -3794,7 +3801,7 @@ class SimpleChoresCard extends LitElement {
       if (groupBy === 'day') {
         date.setDate(date.getDate() - i);
         label = date.toLocaleDateString('en-US', { weekday: 'short' });
-        key = date.toISOString().split('T')[0];
+        key = this._toLocalDateStr(date);
       } else if (groupBy === 'week') {
         date.setDate(date.getDate() - (i * 7));
         label = `W${numLabels - i}`;
@@ -3814,7 +3821,7 @@ class SimpleChoresCard extends LitElement {
       let key;
 
       if (groupBy === 'day') {
-        key = date.toISOString().split('T')[0];
+        key = this._toLocalDateStr(date);
       } else if (groupBy === 'week') {
         key = this._getWeekKey(date);
       } else {
