@@ -1,8 +1,21 @@
 """Pytest fixtures for Simple Chores tests."""
 from __future__ import annotations
 
-import pytest
+import sys
+import types
 from datetime import date
+
+import pytest
+
+# Stub the package __init__.py to allow importing submodules
+# (const.py, recurrence.py) without pulling in Home Assistant dependencies.
+_pkg = types.ModuleType("custom_components")
+_pkg.__path__ = ["custom_components"]
+sys.modules.setdefault("custom_components", _pkg)
+
+_sub = types.ModuleType("custom_components.simple_chores")
+_sub.__path__ = ["custom_components/simple_chores"]
+sys.modules.setdefault("custom_components.simple_chores", _sub)
 
 
 @pytest.fixture

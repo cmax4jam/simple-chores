@@ -13,7 +13,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MAX_CALENDAR_EVENTS
-from .coordinator import SimpleChoresCoordinator, calculate_next_due_for_chore
+from .coordinator import SimpleChoresCoordinator
+from .recurrence import calculate_next_due_for_chore
 
 _LOGGER = logging.getLogger(__name__)
 

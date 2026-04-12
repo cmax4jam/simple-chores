@@ -76,7 +76,34 @@ class SimpleChoresStore:
             if "users" not in self._data:
                 self._data["users"] = {}
                 _LOGGER.info("Added missing 'users' key to existing data")
+            # Migrate legacy chores missing recurrence fields
+            self._migrate_chores()
         return self._data
+
+    def _migrate_chores(self) -> None:
+        """Backfill missing recurrence fields on legacy chores."""
+        migrated = 0
+        for chore in self._data.get("chores", {}).values():
+            if "recurrence_type" not in chore:
+                chore["recurrence_type"] = RECURRENCE_INTERVAL
+                migrated += 1
+            if "interval" not in chore:
+                chore["interval"] = 1
+            # Ensure anchor fields exist (None is fine as default)
+            for field in (
+                "anchor_days_of_week",
+                "anchor_type",
+                "anchor_day_of_month",
+                "anchor_week",
+                "anchor_weekday",
+            ):
+                if field not in chore:
+                    chore[field] = None
+            # Ensure is_completed exists
+            if "is_completed" not in chore:
+                chore["is_completed"] = False
+        if migrated:
+            _LOGGER.info("Migrated %d chore(s) with missing recurrence fields", migrated)
 
     async def async_save(self) -> None:
         """Save data to storage immediately."""
