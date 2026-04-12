@@ -6,7 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import callback
+from homeassistant.core import Event, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers.event import async_track_time_change
 
@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from .coordinator import SimpleChoresCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+ACTION_PREFIX = "SIMPLE_CHORES_COMPLETE_"
 
 
 async def async_setup_notification_scheduler(
@@ -60,6 +62,52 @@ async def async_setup_notification_scheduler(
             second=0,
         )
     )
+
+
+def async_setup_notification_actions(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: SimpleChoresCoordinator,
+) -> None:
+    """Set up listener for notification action events."""
+
+    @callback
+    def _handle_notification_action(event: Event) -> None:
+        """Handle mobile_app_notification_action events."""
+        action = event.data.get("action", "")
+        if not action.startswith(ACTION_PREFIX):
+            return
+
+        chore_ids_str = action[len(ACTION_PREFIX) :]
+        chore_ids = [cid for cid in chore_ids_str.split(",") if cid]
+
+        if not chore_ids:
+            return
+
+        _LOGGER.debug("Notification action: completing chores %s", chore_ids)
+
+        # Get the user ID from the event context if available
+        user_id = None
+        if event.context and event.context.user_id:
+            user_id = event.context.user_id
+
+        hass.async_create_task(_async_complete_chores_from_action(coordinator, chore_ids, user_id))
+
+    entry.async_on_unload(hass.bus.async_listen("mobile_app_notification_action", _handle_notification_action))
+
+
+async def _async_complete_chores_from_action(
+    coordinator: SimpleChoresCoordinator,
+    chore_ids: list[str],
+    user_id: str | None,
+) -> None:
+    """Complete chores triggered by a notification action."""
+    for chore_id in chore_ids:
+        try:
+            await coordinator.async_complete_chore(chore_id, user_id)
+            _LOGGER.debug("Completed chore %s from notification action", chore_id)
+        except Exception:
+            _LOGGER.exception("Failed to complete chore %s from notification action", chore_id)
 
 
 async def _async_check_and_notify(
@@ -208,6 +256,20 @@ async def _async_send_notification_to_targets(
     chore_list = "\n".join([f"• {c['name']} ({c.get('room_name', 'Unknown')})" for c in chores])
     message = f"You have {len(chores)} chore(s) due {due_label}:\n{chore_list}"
 
+    # Build action with chore IDs for completion
+    chore_ids = ",".join(c["id"] for c in chores)
+    actions = [
+        {
+            "action": f"{ACTION_PREFIX}{chore_ids}",
+            "title": "Mark All Done",
+        },
+        {
+            "action": "URI",
+            "title": "Open App",
+            "uri": "/lovelace/0",
+        },
+    ]
+
     # Send notifications
     for target in targets:
         try:
@@ -219,12 +281,7 @@ async def _async_send_notification_to_targets(
                     "message": message,
                     "data": {
                         "tag": f"simple_chores_due_{due_label.replace(' ', '_')}",
-                        "actions": [
-                            {
-                                "action": "OPEN_APP",
-                                "title": "Open Home Assistant",
-                            }
-                        ],
+                        "actions": actions,
                     },
                 },
             )

@@ -88,6 +88,9 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 chore.get("assigned_to"),
             )
 
+            # Add days_overdue for all chores
+            chore_with_room["days_overdue"] = max(0, (today - next_due).days)
+
             # Categorize by due date
             if next_due < today:
                 overdue.append(chore_with_room)

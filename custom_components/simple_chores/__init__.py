@@ -57,7 +57,11 @@ from .const import (
     WEEKDAYS,
 )
 from .coordinator import SimpleChoresCoordinator
-from .notifications import async_send_due_notification, async_setup_notification_scheduler
+from .notifications import (
+    async_send_due_notification,
+    async_setup_notification_actions,
+    async_setup_notification_scheduler,
+)
 from .store import SimpleChoresStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -211,8 +215,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register services
     await _async_setup_services(hass, coordinator)
 
-    # Set up notification scheduler
+    # Set up notification scheduler and action listener
     await async_setup_notification_scheduler(hass, entry, coordinator)
+    async_setup_notification_actions(hass, entry, coordinator)
 
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
