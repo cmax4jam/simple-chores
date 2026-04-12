@@ -172,7 +172,13 @@ async def async_send_due_notification(
         target_date_str = target_date.isoformat()
 
         # Find chores due on this target date
-        chores_due = [chore for chore in all_chores if chore.get("next_due") == target_date_str]
+        # For "today" (days_ahead=0), also include overdue chores
+        if days_ahead == 0:
+            chores_due = [
+                chore for chore in all_chores if chore.get("next_due") and chore["next_due"] <= target_date_str
+            ]
+        else:
+            chores_due = [chore for chore in all_chores if chore.get("next_due") == target_date_str]
 
         if not chores_due:
             continue
