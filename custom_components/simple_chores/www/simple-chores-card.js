@@ -81,6 +81,7 @@ class SimpleChoresCard extends LitElement {
       _showAddChoreModal: { type: Boolean },
       _showEditChoreModal: { type: Boolean },
       _showAllChoresModal: { type: Boolean },
+      _allChoresRoomFilter: { type: String },
       _showHistoryModal: { type: Boolean },
       _showCompleteChoreModal: { type: Boolean },
       // Form data unified under _formData
@@ -147,6 +148,8 @@ class SimpleChoresCard extends LitElement {
     this._showAddChoreModal = false;
     this._showEditChoreModal = false;
     this._showAllChoresModal = false;
+    this._allChoresRoomFilter = "all";
+    this._returnToAllChoresModal = false;
     this._showHistoryModal = false;
     this._showCompleteChoreModal = false;
     // Unified form data
@@ -541,10 +544,21 @@ class SimpleChoresCard extends LitElement {
       this.config.compact_mode ? 'compact' : ''
     ].filter(Boolean).join(' ');
 
+    // Count chores per room for the dropdown
+    const allChoresForCounts = this._getAllChores();
+    const roomChoreCounts = {};
+    for (const chore of allChoresForCounts) {
+      const rid = chore.room_id || chore.room;
+      if (rid) {
+        roomChoreCounts[rid] = (roomChoreCounts[rid] || 0) + 1;
+      }
+    }
+    const roomsWithChores = rooms.filter(r => roomChoreCounts[r.id] > 0);
+
     // Get selected room name for dropdown button
     const selectedRoomName = this._selectedRoom === 'all'
-      ? 'All Rooms'
-      : (rooms.find(r => r.id === this._selectedRoom)?.name || 'All Rooms');
+      ? `All Rooms (${allChoresForCounts.length})`
+      : `${rooms.find(r => r.id === this._selectedRoom)?.name || 'All Rooms'} (${roomChoreCounts[this._selectedRoom] || 0})`;
 
     // Get selected assignee name for dropdown button
     const selectedAssigneeName = this._getSelectedAssigneeName(users);
@@ -581,14 +595,14 @@ class SimpleChoresCard extends LitElement {
                         class="dropdown-item ${this._selectedRoom === 'all' ? 'active' : ''}"
                         @click=${() => this._selectRoom('all')}
                       >
-                        All Rooms
+                        All Rooms (${allChoresForCounts.length})
                       </div>
-                      ${rooms.map(room => html`
+                      ${roomsWithChores.map(room => html`
                         <div
                           class="dropdown-item ${this._selectedRoom === room.id ? 'active' : ''}"
                           @click=${() => this._selectRoom(room.id)}
                         >
-                          ${room.name}
+                          ${room.name} (${roomChoreCounts[room.id]})
                         </div>
                       `)}
                     </div>
@@ -2501,9 +2515,15 @@ class SimpleChoresCard extends LitElement {
     `;
   }
 
-  _openAddChoreModal() {
+  _openAddChoreModal(preselectedRoom) {
     this._showAddChoreModal = true;
     this._resetForm('chore');
+    if (typeof preselectedRoom === 'string' && preselectedRoom) {
+      this._formData = {
+        ...this._formData,
+        chore: { ...this._formData.chore, room: preselectedRoom },
+      };
+    }
 
     // Focus first input after modal renders
     setTimeout(() => {
@@ -2515,6 +2535,10 @@ class SimpleChoresCard extends LitElement {
   _closeAddChoreModal() {
     this._showAddChoreModal = false;
     this._resetForm('chore');
+    if (this._returnToAllChoresModal) {
+      this._returnToAllChoresModal = false;
+      this._showAllChoresModal = true;
+    }
   }
 
   _handleChoreNameInput(e) {
@@ -3266,6 +3290,7 @@ class SimpleChoresCard extends LitElement {
   }
 
   _openAllChoresModal() {
+    this._allChoresRoomFilter = "all";
     this._showAllChoresModal = true;
   }
 
@@ -3296,8 +3321,31 @@ class SimpleChoresCard extends LitElement {
     }
 
     const rawChores = this._getAllChores();
-    const roomFiltered = this._filterChoresByRoom(rawChores);
+
+    // Count chores per room
+    const roomChoreCounts = {};
+    for (const chore of rawChores) {
+      const rid = chore.room_id || chore.room;
+      if (rid) {
+        roomChoreCounts[rid] = (roomChoreCounts[rid] || 0) + 1;
+      }
+    }
+
+    // Get rooms that have chores
+    const allRooms = this._getRooms();
+    const roomsWithChores = allRooms.filter(r => roomChoreCounts[r.id] > 0);
+
+    // Apply room filter
+    const roomFiltered = this._allChoresRoomFilter === 'all'
+      ? rawChores
+      : rawChores.filter(c => (c.room_id || c.room) === this._allChoresRoomFilter);
     const allChores = this._filterChoresByUser(roomFiltered);
+
+    // Current filter label
+    const filterRoom = roomsWithChores.find(r => r.id === this._allChoresRoomFilter);
+    const filterLabel = this._allChoresRoomFilter === 'all'
+      ? `All Rooms (${rawChores.length})`
+      : `${filterRoom?.name || 'Unknown'} (${roomChoreCounts[this._allChoresRoomFilter] || 0})`;
 
     return html`
       <div class="modal-overlay" @click=${this._closeAllChoresModal}>
@@ -3309,10 +3357,28 @@ class SimpleChoresCard extends LitElement {
             </button>
           </div>
           <div class="modal-body" @click=${this._handleContentClick}>
+            <div class="all-chores-toolbar">
+              <select
+                class="room-filter-select"
+                .value=${this._allChoresRoomFilter}
+                @change=${(e) => { this._allChoresRoomFilter = e.target.value; }}
+              >
+                <option value="all">All Rooms (${rawChores.length})</option>
+                ${roomsWithChores.map(room => html`
+                  <option value="${room.id}">
+                    ${room.name} (${roomChoreCounts[room.id]})
+                  </option>
+                `)}
+              </select>
+              <button class="add-chore-btn-toolbar" @click=${this._addChoreFromAllChoresModal}>
+                <ha-icon icon="mdi:plus"></ha-icon>
+                <span>Add Chore</span>
+              </button>
+            </div>
             ${allChores.length === 0 ? html`
               <div class="no-chores">
-                <p>No active chores found.</p>
-                <p>Create your first chore using the + button in the header!</p>
+                <p>No active chores found${this._allChoresRoomFilter !== 'all' ? ' in this room' : ''}.</p>
+                <p>Create a chore using the Add Chore button above!</p>
               </div>
             ` : html`
               <div class="all-chores-list">
@@ -3343,6 +3409,13 @@ class SimpleChoresCard extends LitElement {
     this._cache.roomLookup.set(roomId, roomName);
 
     return roomName;
+  }
+
+  _addChoreFromAllChoresModal() {
+    const preselectedRoom = this._allChoresRoomFilter !== 'all' ? this._allChoresRoomFilter : "";
+    this._returnToAllChoresModal = true;
+    this._closeAllChoresModal();
+    this._openAddChoreModal(preselectedRoom);
   }
 
   // Modal action methods that close the all chores modal before performing actions
@@ -3419,6 +3492,7 @@ class SimpleChoresCard extends LitElement {
   }
 
   _openAllChoresModal() {
+    this._allChoresRoomFilter = "all";
     this._showAllChoresModal = true;
   }
 
@@ -5641,11 +5715,44 @@ class SimpleChoresCard extends LitElement {
         max-height: 90vh;
       }
       
+      .all-chores-toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .room-filter-select {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+        background: var(--card-background-color, #fff);
+        color: var(--primary-text-color, #333);
+        font-size: 14px;
+        cursor: pointer;
+        appearance: auto;
+      }
+      .add-chore-btn-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 14px;
+        border: none;
+        border-radius: 8px;
+        background: var(--primary-color, #03a9f4);
+        color: white;
+        font-size: 14px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .add-chore-btn-toolbar:hover {
+        opacity: 0.9;
+      }
       .all-chores-list {
         display: flex;
         flex-direction: column;
         gap: 12px;
-        max-height: 60vh;
+        max-height: 55vh;
         overflow-y: auto;
       }
       
