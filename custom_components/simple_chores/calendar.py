@@ -14,7 +14,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MAX_CALENDAR_EVENTS
 from .coordinator import SimpleChoresCoordinator
-from .recurrence import calculate_next_due_for_chore
+from .recurrence import (
+    calculate_next_due_for_chore,
+    is_windowed_frequency,
+    iter_calendar_windows,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -125,6 +129,24 @@ class SimpleChoresCalendar(CoordinatorEntity[SimpleChoresCoordinator], CalendarE
         except ValueError:
             _LOGGER.warning("Invalid date format for chore %s: %s", chore["id"], chore["next_due"])
             return []
+
+        # Windowed chores (quarterly/biannual/yearly) render as multi-day spans
+        # covering each static calendar window that overlaps the range.
+        if is_windowed_frequency(frequency):
+            for w_start, w_end in iter_calendar_windows(frequency, start, end):
+                events.append(
+                    CalendarEvent(
+                        start=w_start,
+                        end=w_end + timedelta(days=1),  # HA end is exclusive
+                        summary=chore["name"],
+                        description=(
+                            f"Room: {room_name}\nFrequency: {frequency}\n"
+                            f"Window: {w_start.isoformat()} to {w_end.isoformat()}"
+                        ),
+                        uid=f"{chore['id']}_{w_start.isoformat()}",
+                    )
+                )
+            return events
 
         # One-off chores only appear on their due date
         if frequency == "once":

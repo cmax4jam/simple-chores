@@ -13,8 +13,13 @@ from custom_components.simple_chores.recurrence import (
     calculate_next_anchored_weekly,
     calculate_next_due,
     calculate_next_due_for_chore,
+    get_calendar_window,
+    get_next_window,
     get_nth_weekday_of_month,
     get_week_bounds,
+    initial_window,
+    is_windowed_frequency,
+    iter_calendar_windows,
 )
 
 # Weekday constants (Sunday=0 convention)
@@ -400,3 +405,191 @@ class TestCalculateNextDueForChore:
         next_due2 = calculate_next_due_for_chore(chore, next_due)
         assert next_due2 == date(2026, 4, 22)
         assert next_due2.weekday() == 2
+
+
+class TestIsWindowedFrequency:
+    """Quarterly, biannual, and yearly chores use static calendar windows."""
+
+    def test_quarterly_is_windowed(self):
+        assert is_windowed_frequency("quarterly") is True
+
+    def test_biannual_is_windowed(self):
+        assert is_windowed_frequency("biannual") is True
+
+    def test_yearly_is_windowed(self):
+        assert is_windowed_frequency("yearly") is True
+
+    @pytest.mark.parametrize(
+        "frequency",
+        ["once", "daily", "weekly", "biweekly", "monthly", "bimonthly"],
+    )
+    def test_shorter_frequencies_are_not_windowed(self, frequency):
+        assert is_windowed_frequency(frequency) is False
+
+
+class TestGetCalendarWindow:
+    """Windows are aligned to the calendar, not to the completion date."""
+
+    # Quarterly: Jan-Mar / Apr-Jun / Jul-Sep / Oct-Dec
+    def test_quarterly_q1(self):
+        assert get_calendar_window(date(2024, 2, 10), "quarterly") == (
+            date(2024, 1, 1),
+            date(2024, 3, 31),
+        )
+
+    def test_quarterly_q2_boundaries(self):
+        assert get_calendar_window(date(2024, 4, 1), "quarterly") == (
+            date(2024, 4, 1),
+            date(2024, 6, 30),
+        )
+        assert get_calendar_window(date(2024, 6, 30), "quarterly") == (
+            date(2024, 4, 1),
+            date(2024, 6, 30),
+        )
+
+    def test_quarterly_q4(self):
+        assert get_calendar_window(date(2024, 11, 5), "quarterly") == (
+            date(2024, 10, 1),
+            date(2024, 12, 31),
+        )
+
+    # Biannual: Jan-Jun / Jul-Dec
+    def test_biannual_first_half(self):
+        assert get_calendar_window(date(2024, 3, 15), "biannual") == (
+            date(2024, 1, 1),
+            date(2024, 6, 30),
+        )
+
+    def test_biannual_second_half_boundaries(self):
+        assert get_calendar_window(date(2024, 7, 1), "biannual") == (
+            date(2024, 7, 1),
+            date(2024, 12, 31),
+        )
+        assert get_calendar_window(date(2024, 12, 31), "biannual") == (
+            date(2024, 7, 1),
+            date(2024, 12, 31),
+        )
+
+    # Yearly: full calendar year
+    def test_yearly(self):
+        assert get_calendar_window(date(2024, 8, 20), "yearly") == (
+            date(2024, 1, 1),
+            date(2024, 12, 31),
+        )
+
+
+class TestGetNextWindow:
+    """The next target window is the next consecutive calendar window."""
+
+    def test_biannual_in_window_advances_to_next(self):
+        # Completed the Jan-Jun window; next is Jul-Dec of the same year.
+        current_end = date(2024, 6, 30)
+        assert get_next_window(current_end, "biannual", today=date(2024, 3, 1)) == (
+            date(2024, 7, 1),
+            date(2024, 12, 31),
+        )
+
+    def test_biannual_second_half_wraps_to_next_year(self):
+        current_end = date(2024, 12, 31)
+        assert get_next_window(current_end, "biannual", today=date(2024, 8, 1)) == (
+            date(2025, 1, 1),
+            date(2025, 6, 30),
+        )
+
+    def test_quarterly_advances_one_quarter(self):
+        current_end = date(2024, 3, 31)
+        assert get_next_window(current_end, "quarterly", today=date(2024, 2, 1)) == (
+            date(2024, 4, 1),
+            date(2024, 6, 30),
+        )
+
+    def test_yearly_advances_one_year(self):
+        current_end = date(2024, 12, 31)
+        assert get_next_window(current_end, "yearly", today=date(2024, 5, 1)) == (
+            date(2025, 1, 1),
+            date(2025, 12, 31),
+        )
+
+    def test_very_overdue_skips_fully_past_windows(self):
+        # Target was H1 2024 but it's now early 2025: skip the fully-past
+        # H2 2024 window and land on the current live window (H1 2025).
+        current_end = date(2024, 6, 30)
+        assert get_next_window(current_end, "biannual", today=date(2025, 2, 1)) == (
+            date(2025, 1, 1),
+            date(2025, 6, 30),
+        )
+
+
+class TestInitialWindow:
+    """A new windowed chore starts in the window containing its start date."""
+
+    def test_defaults_to_today_window(self):
+        assert initial_window(None, date(2024, 3, 15), "biannual") == (
+            date(2024, 1, 1),
+            date(2024, 6, 30),
+        )
+
+    def test_uses_future_start_date_window(self):
+        assert initial_window(date(2024, 9, 1), date(2024, 3, 15), "quarterly") == (
+            date(2024, 7, 1),
+            date(2024, 9, 30),
+        )
+
+    def test_past_start_date_advances_to_current_window(self):
+        # Start date long ago should not leave the chore stuck in a dead window.
+        assert initial_window(date(2023, 2, 1), date(2024, 3, 15), "biannual") == (
+            date(2024, 1, 1),
+            date(2024, 6, 30),
+        )
+
+
+class TestStaticWindowFlow:
+    """End-to-end static behavior matching the user's biannual example."""
+
+    def test_complete_early_keeps_next_window_static(self):
+        # Windows Jan-Jun / Jul-Dec. Target starts as Jan-Jun.
+        start = initial_window(None, date(2024, 1, 5), "biannual")
+        assert start == (date(2024, 1, 1), date(2024, 6, 30))
+
+        # Completed in March -> next window is Jul-Dec, NOT March + 6 months.
+        nxt = get_next_window(start[1], "biannual", today=date(2024, 3, 10))
+        assert nxt == (date(2024, 7, 1), date(2024, 12, 31))
+
+        # Completed again in August -> next is Jan-Jun of the following year.
+        nxt2 = get_next_window(nxt[1], "biannual", today=date(2024, 8, 20))
+        assert nxt2 == (date(2025, 1, 1), date(2025, 6, 30))
+
+
+class TestIterCalendarWindows:
+    """Enumerate the static calendar windows overlapping a date range."""
+
+    def test_biannual_windows_in_one_year(self):
+        windows = iter_calendar_windows(
+            "biannual", date(2024, 1, 1), date(2024, 12, 31)
+        )
+        assert windows == [
+            (date(2024, 1, 1), date(2024, 6, 30)),
+            (date(2024, 7, 1), date(2024, 12, 31)),
+        ]
+
+    def test_includes_partially_overlapping_windows(self):
+        # Range starts mid-H1 and ends mid-H2: both windows overlap.
+        windows = iter_calendar_windows(
+            "biannual", date(2024, 5, 1), date(2024, 8, 1)
+        )
+        assert windows == [
+            (date(2024, 1, 1), date(2024, 6, 30)),
+            (date(2024, 7, 1), date(2024, 12, 31)),
+        ]
+
+    def test_quarterly_windows_span_year_boundary(self):
+        windows = iter_calendar_windows(
+            "quarterly", date(2024, 11, 1), date(2025, 2, 1)
+        )
+        assert windows == [
+            (date(2024, 10, 1), date(2024, 12, 31)),
+            (date(2025, 1, 1), date(2025, 3, 31)),
+        ]
+
+    def test_empty_when_range_inverted(self):
+        assert iter_calendar_windows("yearly", date(2025, 1, 1), date(2024, 1, 1)) == []

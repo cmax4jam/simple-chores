@@ -24,6 +24,12 @@ from .const import (
     WEEK_ORDINALS,
     WEEKDAYS,
 )
+from .recurrence import (
+    get_calendar_window,
+    get_next_window,
+    initial_window,
+    is_windowed_frequency,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -102,6 +108,18 @@ class SimpleChoresStore:
             # Ensure is_completed exists
             if "is_completed" not in chore:
                 chore["is_completed"] = False
+            # Backfill static window fields for windowed frequencies.
+            if "window_start" not in chore or "window_end" not in chore:
+                if is_windowed_frequency(chore.get("frequency", "")) and chore.get("next_due"):
+                    w_start, w_end = get_calendar_window(
+                        date.fromisoformat(chore["next_due"]), chore["frequency"]
+                    )
+                    chore["window_start"] = w_start.isoformat()
+                    chore["window_end"] = w_end.isoformat()
+                    chore["next_due"] = w_end.isoformat()
+                else:
+                    chore.setdefault("window_start", None)
+                    chore.setdefault("window_end", None)
         if migrated:
             _LOGGER.info("Migrated %d chore(s) with missing recurrence fields", migrated)
 
@@ -324,6 +342,18 @@ class SimpleChoresStore:
 
         chore_id = uuid.uuid4().hex[:8]
         next_due = start_date or date.today()
+
+        # Windowed frequencies (quarterly/biannual/yearly) use a static,
+        # calendar-aligned completion window. next_due is kept equal to the
+        # window end so the sensor/overdue layer keeps working unchanged.
+        window_start_iso: str | None = None
+        window_end_iso: str | None = None
+        if is_windowed_frequency(frequency):
+            w_start, w_end = initial_window(start_date, date.today(), frequency)
+            window_start_iso = w_start.isoformat()
+            window_end_iso = w_end.isoformat()
+            next_due = w_end
+
         chore = {
             "id": chore_id,
             "name": name,
@@ -343,6 +373,9 @@ class SimpleChoresStore:
             "anchor_day_of_month": anchor_day_of_month,
             "anchor_week": anchor_week,
             "anchor_weekday": anchor_weekday,
+            # Static window fields (None for non-windowed frequencies)
+            "window_start": window_start_iso,
+            "window_end": window_end_iso,
         }
 
         # Debug logging for assignment
@@ -469,6 +502,21 @@ class SimpleChoresStore:
         if "interval" not in chore:
             chore["interval"] = 1
 
+        # Reconcile static window fields with the (possibly changed) frequency.
+        if is_windowed_frequency(chore["frequency"]):
+            # (Re)establish a window if one isn't already present, or if an
+            # explicit next_due was supplied to reposition the chore.
+            if next_due is not None or not chore.get("window_end"):
+                seed = next_due or date.fromisoformat(chore["next_due"])
+                w_start, w_end = initial_window(seed, date.today(), chore["frequency"])
+                chore["window_start"] = w_start.isoformat()
+                chore["window_end"] = w_end.isoformat()
+                chore["next_due"] = w_end.isoformat()
+        else:
+            # Non-windowed frequency: clear any stale window fields.
+            chore["window_start"] = None
+            chore["window_end"] = None
+
         return chore
 
     def remove_chore(self, chore_id: str) -> bool:
@@ -485,7 +533,13 @@ class SimpleChoresStore:
         user_name: str,
         next_due: date | None,
     ) -> dict[str, Any] | None:
-        """Mark a chore as completed and schedule next occurrence (or mark as done if one-off)."""
+        """Mark a chore as completed and schedule next occurrence (or mark as done if one-off).
+
+        Windowed (quarterly/biannual/yearly) chores advance to the next static,
+        calendar-aligned window regardless of completion date; ``next_due`` is
+        ignored for them. For all other chores ``next_due`` drives rescheduling
+        (None marks a one-off chore permanently complete).
+        """
         if chore_id not in self._data["chores"]:
             return None
 
@@ -496,7 +550,17 @@ class SimpleChoresStore:
         chore["last_completed"] = now.date().isoformat()
         chore["last_completed_by"] = user_id
 
-        if next_due is None:
+        frequency = chore.get("frequency", "")
+        if is_windowed_frequency(frequency) and chore.get("window_end"):
+            # Advance to the next fixed calendar window. This is independent of
+            # the completion date, so completing early does not shift the window.
+            current_end = date.fromisoformat(chore["window_end"])
+            w_start, w_end = get_next_window(current_end, frequency, date.today())
+            chore["window_start"] = w_start.isoformat()
+            chore["window_end"] = w_end.isoformat()
+            chore["next_due"] = w_end.isoformat()
+            chore["is_completed"] = False
+        elif next_due is None:
             # One-off chore - mark as completed permanently
             chore["is_completed"] = True
             _LOGGER.info("One-off chore '%s' marked as completed", chore["name"])

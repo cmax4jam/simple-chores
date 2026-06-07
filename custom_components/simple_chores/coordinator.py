@@ -230,6 +230,8 @@ class SimpleChoresCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             calc_from = today
 
+        # For windowed (quarterly/biannual/yearly) chores the store advances to
+        # the next static calendar window itself and ignores this value.
         next_due = calculate_next_due_for_chore(chore, calc_from)
 
         # Get user info
