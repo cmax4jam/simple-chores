@@ -110,6 +110,9 @@ class SimpleChoresDueTodaySensor(SimpleChoresBaseSensor):
                     "anchor_week": c.get("anchor_week"),
                     "anchor_weekday": c.get("anchor_weekday"),
                     "interval": c.get("interval", 1),
+                    # Static completion window (None for non-windowed frequencies)
+                    "window_start": c.get("window_start"),
+                    "window_end": c.get("window_end"),
                 }
                 for c in chores
             ],
@@ -162,6 +165,9 @@ class SimpleChoresDueThisWeekSensor(SimpleChoresBaseSensor):
                     "anchor_week": c.get("anchor_week"),
                     "anchor_weekday": c.get("anchor_weekday"),
                     "interval": c.get("interval", 1),
+                    # Static completion window (None for non-windowed frequencies)
+                    "window_start": c.get("window_start"),
+                    "window_end": c.get("window_end"),
                 }
                 for c in chores
             ],
@@ -215,6 +221,9 @@ class SimpleChoresOverdueSensor(SimpleChoresBaseSensor):
                 "anchor_week": c.get("anchor_week"),
                 "anchor_weekday": c.get("anchor_weekday"),
                 "interval": c.get("interval", 1),
+                # Static completion window (None for non-windowed frequencies)
+                "window_start": c.get("window_start"),
+                "window_end": c.get("window_end"),
             }
             for c in chores
         ]
@@ -282,6 +291,9 @@ class SimpleChoresTotalSensor(SimpleChoresBaseSensor):
                     "anchor_week": c.get("anchor_week"),
                     "anchor_weekday": c.get("anchor_weekday"),
                     "interval": c.get("interval", 1),
+                    # Static completion window (None for non-windowed frequencies)
+                    "window_start": c.get("window_start"),
+                    "window_end": c.get("window_end"),
                 }
                 for c in all_chores
             ],
