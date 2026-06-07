@@ -64,6 +64,8 @@ class SimpleChoresCard extends LitElement {
       _currentView: { type: String },
       _calendarMonth: { type: Number },
       _calendarYear: { type: Number },
+      // Gantt timeline horizontal scroll offset (in months from current month)
+      _ganttMonthOffset: { type: Number },
       _optimisticChoreUpdates: { type: Object },
       // Dropdown states for new header UI
       _showRoomDropdown: { type: Boolean },
@@ -131,6 +133,7 @@ class SimpleChoresCard extends LitElement {
     const now = new Date();
     this._calendarMonth = now.getMonth();
     this._calendarYear = now.getFullYear();
+    this._ganttMonthOffset = 0;
     this._optimisticChoreUpdates = {};
     // Dropdown states for new header UI
     this._showRoomDropdown = false;
@@ -675,10 +678,17 @@ class SimpleChoresCard extends LitElement {
             <div class="header-icon-buttons">
               <button
                 class="icon-btn ${this._currentView === 'calendar' ? 'active' : ''}"
-                @click=${this._toggleView}
-                title="${this._currentView === 'list' ? 'Switch to Calendar View' : 'Switch to List View'}"
+                @click=${() => this._setView('calendar')}
+                title="${this._currentView === 'calendar' ? 'Switch to List View' : 'Switch to Calendar View'}"
               >
                 <ha-icon icon="mdi:calendar"></ha-icon>
+              </button>
+              <button
+                class="icon-btn ${this._currentView === 'gantt' ? 'active' : ''}"
+                @click=${() => this._setView('gantt')}
+                title="${this._currentView === 'gantt' ? 'Switch to List View' : 'Switch to Timeline View'}"
+              >
+                <ha-icon icon="mdi:chart-timeline-variant"></ha-icon>
               </button>
               <button class="icon-btn" @click=${this._openHistoryModal} title="View Completion History">
                 <ha-icon icon="mdi:history"></ha-icon>
@@ -688,12 +698,14 @@ class SimpleChoresCard extends LitElement {
         </div>
 
         <div class="card-content" @click=${this._handleContentClick}>
-          ${this._currentView === 'list' ? html`
+          ${this._currentView === 'gantt' ? html`
+            ${this._renderGanttView()}
+          ` : this._currentView === 'calendar' ? html`
+            ${this._renderCalendarView()}
+          ` : html`
             ${!this.config.hide_stats ? this._renderStats() : ''}
             ${this._renderChoreList(dueToday, "Due Today")}
             ${this._renderChoreList(dueThisWeek, "Due in Next 7 Days")}
-          ` : html`
-            ${this._renderCalendarView()}
           `}
         </div>
 
@@ -1391,6 +1403,180 @@ class SimpleChoresCard extends LitElement {
     return occurrences;
   }
 
+  // --- Gantt / timeline view for windowed (long-term) chores ---
+
+  _isWindowedFrequency(frequency) {
+    return frequency === 'quarterly' || frequency === 'biannual' || frequency === 'yearly';
+  }
+
+  _windowMonths(frequency) {
+    return { quarterly: 3, biannual: 6, yearly: 12 }[frequency] || 3;
+  }
+
+  // Return the static calendar window (start/end Dates) containing date `d`.
+  _calendarWindowFor(d, frequency) {
+    const months = this._windowMonths(frequency);
+    const idx = Math.floor(d.getMonth() / months);
+    const startMonth = idx * months;
+    const start = new Date(d.getFullYear(), startMonth, 1);
+    const end = new Date(d.getFullYear(), startMonth + months, 0); // last day
+    return { start, end };
+  }
+
+  // All static windows overlapping [rangeStart, rangeEnd].
+  _windowsInRange(frequency, rangeStart, rangeEnd) {
+    const windows = [];
+    let w = this._calendarWindowFor(rangeStart, frequency);
+    let guard = 0;
+    while (w.start <= rangeEnd && guard < 64) {
+      windows.push(w);
+      const nextSeed = new Date(w.end.getFullYear(), w.end.getMonth(), w.end.getDate() + 1);
+      w = this._calendarWindowFor(nextSeed, frequency);
+      guard++;
+    }
+    return windows;
+  }
+
+  _renderGanttView() {
+    const MS_PER_DAY = 86400000;
+    const VISIBLE_MONTHS = 12;
+    const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    const allChores = this._getAllChores();
+    const roomFiltered = this._filterChoresByRoom(allChores);
+    const chores = this._filterChoresByUser(roomFiltered)
+      .filter(c => this._isWindowedFrequency(c.frequency));
+
+    if (!chores.length) {
+      return html`
+        <div class="gantt-empty">
+          <ha-icon icon="mdi:chart-timeline-variant"></ha-icon>
+          <p>No long-term chores to show here.</p>
+          <p class="gantt-empty-hint">
+            Quarterly, biannual, and yearly chores appear on this timeline with
+            the window during which they can be completed.
+          </p>
+        </div>
+      `;
+    }
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const rangeStart = new Date(now.getFullYear(), now.getMonth() + this._ganttMonthOffset, 1);
+    const rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth() + VISIBLE_MONTHS, 0);
+    const totalDays = Math.round((rangeEnd - rangeStart) / MS_PER_DAY) + 1;
+
+    // Percentage position of a date within the visible range (clamped).
+    const pct = (d) => {
+      const ms = Math.max(rangeStart.getTime(), Math.min(rangeEnd.getTime(), d.getTime()));
+      return ((ms - rangeStart.getTime()) / MS_PER_DAY) / totalDays * 100;
+    };
+
+    // Month header columns sized by their day count so gridlines align with bars.
+    const months = [];
+    for (let i = 0; i < VISIBLE_MONTHS; i++) {
+      const m = new Date(rangeStart.getFullYear(), rangeStart.getMonth() + i, 1);
+      const daysInMonth = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
+      months.push({ date: m, widthPct: (daysInMonth / totalDays) * 100 });
+    }
+
+    const parseISO = (s) => (s ? new Date(s + 'T00:00:00') : null);
+    const showToday = today >= rangeStart && today <= rangeEnd;
+    const todayLeft = pct(today);
+
+    const rows = chores.map(chore => {
+      const targetStart = parseISO(chore.window_start);
+      const roomName = chore.room_name || this._getRoomName(chore.room_id) || '';
+      const windows = this._windowsInRange(chore.frequency, rangeStart, rangeEnd);
+
+      const bars = windows.map(w => {
+        let cls;
+        if (targetStart && w.start.getTime() < targetStart.getTime()) {
+          cls = 'past';
+        } else if (targetStart && w.start.getTime() === targetStart.getTime()) {
+          cls = w.end < today ? 'overdue' : 'active';
+        } else {
+          cls = 'projected';
+        }
+        const left = pct(w.start);
+        // End is inclusive; extend by one day for the bar's right edge.
+        const right = pct(new Date(w.end.getFullYear(), w.end.getMonth(), w.end.getDate() + 1));
+        const width = Math.max(1, right - left);
+        const clickable = cls === 'active' || cls === 'overdue';
+        const label = `${monthsShort[w.start.getMonth()]}–${monthsShort[w.end.getMonth()]}`;
+        const tip = clickable
+          ? `Click to complete "${chore.name}" for this window (${label})`
+          : (cls === 'past' ? `Completed window (${label})` : `Upcoming window (${label})`);
+        return html`
+          <div
+            class="gantt-bar ${cls} ${clickable ? 'clickable' : ''}"
+            style="left:${left}%;width:${width}%"
+            title="${tip}"
+            @click=${clickable ? () => this._openCompleteChoreModal(chore) : null}
+          >
+            <span class="gantt-bar-label">${label}</span>
+          </div>
+        `;
+      });
+
+      return html`
+        <div class="gantt-row">
+          <div class="gantt-row-label" title="${chore.name}">
+            <span class="gantt-row-name">${chore.name}</span>
+            ${roomName ? html`<span class="gantt-row-room">${roomName}</span>` : ''}
+          </div>
+          <div class="gantt-track">
+            ${showToday ? html`<div class="gantt-today-line" style="left:${todayLeft}%"></div>` : ''}
+            ${bars}
+          </div>
+        </div>
+      `;
+    });
+
+    const rangeLabel =
+      `${monthsShort[rangeStart.getMonth()]} ${rangeStart.getFullYear()} – ` +
+      `${monthsShort[rangeEnd.getMonth()]} ${rangeEnd.getFullYear()}`;
+
+    return html`
+      <div class="gantt-view">
+        <div class="gantt-nav">
+          <button class="gantt-nav-btn" @click=${() => this._ganttShift(-3)} title="Earlier">
+            <ha-icon icon="mdi:chevron-left"></ha-icon>
+          </button>
+          <span class="gantt-range-label">${rangeLabel}</span>
+          <button class="gantt-nav-btn" @click=${() => this._ganttShift(3)} title="Later">
+            <ha-icon icon="mdi:chevron-right"></ha-icon>
+          </button>
+          ${this._ganttMonthOffset !== 0
+            ? html`<button class="gantt-today-btn" @click=${() => { this._ganttMonthOffset = 0; }}>Today</button>`
+            : ''}
+        </div>
+        <div class="gantt-header">
+          <div class="gantt-corner"></div>
+          <div class="gantt-months">
+            ${months.map(m => html`
+              <div class="gantt-month" style="width:${m.widthPct}%">
+                ${monthsShort[m.date.getMonth()]}${m.date.getMonth() === 0
+                  ? html`<span class="gantt-month-year">${m.date.getFullYear()}</span>`
+                  : ''}
+              </div>
+            `)}
+          </div>
+        </div>
+        <div class="gantt-body">
+          ${rows}
+        </div>
+        <div class="gantt-legend">
+          <span class="gantt-legend-item"><span class="gantt-swatch active"></span>Current window</span>
+          <span class="gantt-legend-item"><span class="gantt-swatch overdue"></span>Overdue</span>
+          <span class="gantt-legend-item"><span class="gantt-swatch past"></span>Completed</span>
+          <span class="gantt-legend-item"><span class="gantt-swatch projected"></span>Upcoming</span>
+        </div>
+      </div>
+    `;
+  }
+
   _renderCalendarView() {
     const allChores = this._getAllChores();
     const roomFiltered = this._filterChoresByRoom(allChores);
@@ -2041,6 +2227,15 @@ class SimpleChoresCard extends LitElement {
 
   _toggleView() {
     this._currentView = this._currentView === 'list' ? 'calendar' : 'list';
+  }
+
+  _setView(view) {
+    // Toggle the requested view off (back to list) if it's already active.
+    this._currentView = this._currentView === view ? 'list' : view;
+  }
+
+  _ganttShift(months) {
+    this._ganttMonthOffset += months;
   }
 
   _filterChoresByUser(chores) {
@@ -6252,6 +6447,251 @@ class SimpleChoresCard extends LitElement {
         .modal-content {
           max-width: none;
           width: 100%;
+        }
+      }
+
+      /* ============================================
+         GANTT / TIMELINE VIEW
+         ============================================ */
+      .gantt-view {
+        --gantt-label-w: 140px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px 4px;
+      }
+
+      .gantt-nav {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 4px;
+      }
+
+      .gantt-nav-btn,
+      .gantt-today-btn {
+        background: var(--card-background-color, #fff);
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 6px;
+        color: var(--primary-text-color);
+        cursor: pointer;
+        padding: 4px 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .gantt-today-btn {
+        font-size: 0.8rem;
+        margin-left: auto;
+      }
+
+      .gantt-nav-btn:hover,
+      .gantt-today-btn:hover {
+        background: var(--secondary-background-color, #f5f5f5);
+      }
+
+      .gantt-range-label {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--primary-text-color);
+      }
+
+      .gantt-header,
+      .gantt-row {
+        display: grid;
+        grid-template-columns: var(--gantt-label-w) 1fr;
+        align-items: stretch;
+      }
+
+      .gantt-header {
+        position: sticky;
+        top: 0;
+        border-bottom: 2px solid var(--divider-color, #e0e0e0);
+        padding-bottom: 4px;
+      }
+
+      .gantt-months {
+        display: flex;
+      }
+
+      .gantt-month {
+        font-size: 0.7rem;
+        color: var(--secondary-text-color);
+        text-align: left;
+        padding-left: 2px;
+        border-left: 1px solid var(--divider-color, #e0e0e0);
+        box-sizing: border-box;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+
+      .gantt-month-year {
+        display: block;
+        font-weight: 600;
+        color: var(--primary-text-color);
+      }
+
+      .gantt-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .gantt-row {
+        min-height: 34px;
+      }
+
+      .gantt-row-label {
+        padding: 4px 8px 4px 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .gantt-row-name {
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--primary-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .gantt-row-room {
+        font-size: 0.7rem;
+        color: var(--secondary-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .gantt-track {
+        position: relative;
+        background: var(--secondary-background-color, #f5f5f5);
+        border-radius: 6px;
+        min-height: 28px;
+        margin: 3px 0;
+      }
+
+      .gantt-today-line {
+        position: absolute;
+        top: -3px;
+        bottom: -3px;
+        width: 2px;
+        background: var(--error-color, #f44336);
+        opacity: 0.6;
+        z-index: 1;
+      }
+
+      .gantt-bar {
+        position: absolute;
+        top: 3px;
+        bottom: 3px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        padding: 0 6px;
+        box-sizing: border-box;
+        overflow: hidden;
+        z-index: 2;
+      }
+
+      .gantt-bar-label {
+        font-size: 0.68rem;
+        color: #fff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .gantt-bar.active {
+        background: var(--primary-color, #3b82f6);
+      }
+
+      .gantt-bar.overdue {
+        background: var(--error-color, #f44336);
+      }
+
+      .gantt-bar.past {
+        background: var(--success-color, #4caf50);
+        opacity: 0.55;
+      }
+
+      .gantt-bar.projected {
+        background: transparent;
+        border: 1px dashed var(--primary-color, #3b82f6);
+        opacity: 0.6;
+      }
+
+      .gantt-bar.projected .gantt-bar-label {
+        color: var(--primary-text-color);
+      }
+
+      .gantt-bar.clickable {
+        cursor: pointer;
+      }
+
+      .gantt-bar.clickable:hover {
+        filter: brightness(1.1);
+        box-shadow: 0 0 0 2px var(--primary-color, #3b82f6) inset;
+      }
+
+      .gantt-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 8px 4px 0;
+        border-top: 1px solid var(--divider-color, #e0e0e0);
+      }
+
+      .gantt-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.72rem;
+        color: var(--secondary-text-color);
+      }
+
+      .gantt-swatch {
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        display: inline-block;
+      }
+
+      .gantt-swatch.active { background: var(--primary-color, #3b82f6); }
+      .gantt-swatch.overdue { background: var(--error-color, #f44336); }
+      .gantt-swatch.past { background: var(--success-color, #4caf50); opacity: 0.55; }
+      .gantt-swatch.projected {
+        background: transparent;
+        border: 1px dashed var(--primary-color, #3b82f6);
+      }
+
+      .gantt-empty {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--secondary-text-color);
+      }
+
+      .gantt-empty ha-icon {
+        --mdc-icon-size: 40px;
+        color: var(--disabled-text-color, #9e9e9e);
+      }
+
+      .gantt-empty-hint {
+        font-size: 0.8rem;
+        max-width: 320px;
+        margin: 4px auto 0;
+      }
+
+      @media (max-width: 500px) {
+        .gantt-view {
+          --gantt-label-w: 96px;
+        }
+        .gantt-bar-label {
+          font-size: 0.6rem;
         }
       }
     `;
