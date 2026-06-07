@@ -27,7 +27,76 @@ from .const import (
     RECURRENCE_ANCHORED,
     RECURRENCE_INTERVAL,
     WEEK_LAST,
+    WINDOWED_FREQUENCIES,
 )
+
+# Length in months of each windowed frequency's calendar window.
+_WINDOW_MONTHS: dict[str, int] = {
+    FREQUENCY_QUARTERLY: 3,
+    FREQUENCY_BIANNUAL: 6,
+    FREQUENCY_YEARLY: 12,
+}
+
+
+def is_windowed_frequency(frequency: str) -> bool:
+    """Return True if the frequency uses static calendar-aligned windows.
+
+    Quarterly, biannual, and yearly chores are tracked by a completion window
+    rather than a single sliding due date.
+    """
+    return frequency in WINDOWED_FREQUENCIES
+
+
+def get_calendar_window(d: date, frequency: str) -> tuple[date, date]:
+    """Return the (start, end) of the fixed calendar window containing ``d``.
+
+    Windows are aligned to the calendar, independent of any completion date:
+      - quarterly: Jan-Mar / Apr-Jun / Jul-Sep / Oct-Dec
+      - biannual:  Jan-Jun / Jul-Dec
+      - yearly:    full calendar year
+
+    The end date is inclusive (the last day of the window).
+    """
+    months = _WINDOW_MONTHS.get(frequency)
+    if months is None:
+        raise ValueError(f"{frequency!r} is not a windowed frequency")
+
+    # Index of the window within the year (0-based), then its starting month.
+    window_index = (d.month - 1) // months
+    start_month = window_index * months + 1
+    start = date(d.year, start_month, 1)
+    end = start + relativedelta(months=months) - timedelta(days=1)
+    return start, end
+
+
+def get_next_window(current_end: date, frequency: str, today: date) -> tuple[date, date]:
+    """Return the next consecutive calendar window after ``current_end``.
+
+    Advances forward only as far as needed so the returned window's end is on or
+    after ``today``. A normal in-window completion lands on the immediately
+    following window, while a very overdue completion skips windows that are
+    already entirely in the past.
+    """
+    # The window starting the day after the current one ends.
+    start, end = get_calendar_window(current_end + timedelta(days=1), frequency)
+    while end < today:
+        start, end = get_calendar_window(end + timedelta(days=1), frequency)
+    return start, end
+
+
+def initial_window(
+    start_date: date | None, today: date, frequency: str
+) -> tuple[date, date]:
+    """Return the starting window for a newly created windowed chore.
+
+    Uses the window containing ``start_date`` (or ``today`` if not given),
+    advanced forward so the window has not already fully elapsed.
+    """
+    seed = start_date or today
+    start, end = get_calendar_window(seed, frequency)
+    while end < today:
+        start, end = get_calendar_window(end + timedelta(days=1), frequency)
+    return start, end
 
 
 def calculate_next_due(from_date: date, frequency: str) -> date | None:

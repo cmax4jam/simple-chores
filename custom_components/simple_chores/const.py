@@ -31,6 +31,14 @@ FREQUENCIES: Final = [
     FREQUENCY_YEARLY,
 ]
 
+# Frequencies that use static, calendar-aligned completion windows instead of a
+# single sliding due date. The window does not drift based on completion date.
+WINDOWED_FREQUENCIES: Final = (
+    FREQUENCY_QUARTERLY,
+    FREQUENCY_BIANNUAL,
+    FREQUENCY_YEARLY,
+)
+
 # Recurrence types
 RECURRENCE_INTERVAL: Final = "interval"  # Every N days/weeks/months from completion
 RECURRENCE_ANCHORED: Final = "anchored"  # Specific days (every Tuesday, 15th of month, etc.)
