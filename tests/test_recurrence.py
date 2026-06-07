@@ -19,6 +19,7 @@ from custom_components.simple_chores.recurrence import (
     get_week_bounds,
     initial_window,
     is_windowed_frequency,
+    iter_calendar_windows,
 )
 
 # Weekday constants (Sunday=0 convention)
@@ -557,3 +558,38 @@ class TestStaticWindowFlow:
         # Completed again in August -> next is Jan-Jun of the following year.
         nxt2 = get_next_window(nxt[1], "biannual", today=date(2024, 8, 20))
         assert nxt2 == (date(2025, 1, 1), date(2025, 6, 30))
+
+
+class TestIterCalendarWindows:
+    """Enumerate the static calendar windows overlapping a date range."""
+
+    def test_biannual_windows_in_one_year(self):
+        windows = iter_calendar_windows(
+            "biannual", date(2024, 1, 1), date(2024, 12, 31)
+        )
+        assert windows == [
+            (date(2024, 1, 1), date(2024, 6, 30)),
+            (date(2024, 7, 1), date(2024, 12, 31)),
+        ]
+
+    def test_includes_partially_overlapping_windows(self):
+        # Range starts mid-H1 and ends mid-H2: both windows overlap.
+        windows = iter_calendar_windows(
+            "biannual", date(2024, 5, 1), date(2024, 8, 1)
+        )
+        assert windows == [
+            (date(2024, 1, 1), date(2024, 6, 30)),
+            (date(2024, 7, 1), date(2024, 12, 31)),
+        ]
+
+    def test_quarterly_windows_span_year_boundary(self):
+        windows = iter_calendar_windows(
+            "quarterly", date(2024, 11, 1), date(2025, 2, 1)
+        )
+        assert windows == [
+            (date(2024, 10, 1), date(2024, 12, 31)),
+            (date(2025, 1, 1), date(2025, 3, 31)),
+        ]
+
+    def test_empty_when_range_inverted(self):
+        assert iter_calendar_windows("yearly", date(2025, 1, 1), date(2024, 1, 1)) == []

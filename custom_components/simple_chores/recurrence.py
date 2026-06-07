@@ -99,6 +99,25 @@ def initial_window(
     return start, end
 
 
+def iter_calendar_windows(
+    frequency: str, range_start: date, range_end: date
+) -> list[tuple[date, date]]:
+    """Return all static calendar windows overlapping ``[range_start, range_end]``.
+
+    Windows are calendar-aligned and consecutive (no skipping), so this is
+    suitable for rendering a timeline of past/current/future windows.
+    """
+    if range_end < range_start:
+        return []
+
+    windows: list[tuple[date, date]] = []
+    start, end = get_calendar_window(range_start, frequency)
+    while start <= range_end:
+        windows.append((start, end))
+        start, end = get_calendar_window(end + timedelta(days=1), frequency)
+    return windows
+
+
 def calculate_next_due(from_date: date, frequency: str) -> date | None:
     """Calculate the next due date based on frequency.
 
